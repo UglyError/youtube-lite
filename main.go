@@ -8,10 +8,13 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/wailsapp/go-webview2/pkg/edge"
@@ -77,15 +80,25 @@ func main() {
 		fatal("Couldn't create the window.")
 	}
 
+	// The window must be visible before WebView2 attaches to it, or the page can stay blank.
+	showWindow(mainWnd)
+
 	chromium = edge.NewChromium()
 	chromium.DataPath = filepath.Join(dataDir, "WebView")
 	chromium.SetErrorCallback(func(err error) {
+		logf("webview error: %v", err)
 		fatal("The browser view stopped working:\n" + err.Error())
 	})
 	chromium.MessageCallback = func(message string, _ *edge.ICoreWebView2, _ *edge.ICoreWebView2WebMessageReceivedEventArgs) {
 		onPageMessage(message)
 	}
+	chromium.NavigationCompletedCallback = onNavigationCompleted
+	chromium.ProcessFailedCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2ProcessFailedEventArgs) {
+		kind, _ := args.GetProcessFailedKind()
+		logf("webview process failed, kind %d", kind)
+	}
 	chromium.Embed(mainWnd)
+	chromium.SetBackgroundColour(15, 15, 15, 255)
 	applyDPI()
 
 	if s, err := chromium.GetSettings(); err == nil {
@@ -99,9 +112,9 @@ func main() {
 
 	chromium.Init(injectJS)
 	chromium.Navigate(startURL)
-	showWindow(mainWnd)
 	chromium.Resize()
 	chromium.Focus()
+	logf("started")
 
 	// A link dragged onto the exe (or "Open with") plays straight away.
 	for _, a := range os.Args[1:] {
@@ -137,6 +150,50 @@ func wndProc(hwnd, msg, wp, lp uintptr) uintptr {
 		return 0
 	}
 	return defWindowProc(hwnd, msg, wp, lp)
+}
+
+var firstPageShown bool
+
+// navigationArgs mirrors ICoreWebView2NavigationCompletedEventArgs, whose getters go-webview2 doesn't expose.
+type navigationArgs struct {
+	vtbl *struct {
+		QueryInterface, AddRef, Release                  uintptr
+		GetIsSuccess, GetWebErrorStatus, GetNavigationID uintptr
+	}
+}
+
+func onNavigationCompleted(_ *edge.ICoreWebView2, args *edge.ICoreWebView2NavigationCompletedEventArgs) {
+	nav := (*navigationArgs)(unsafe.Pointer(args))
+	var ok, status int32
+	syscall.SyscallN(nav.vtbl.GetIsSuccess, uintptr(unsafe.Pointer(nav)), uintptr(unsafe.Pointer(&ok)))
+	if ok == 0 {
+		syscall.SyscallN(nav.vtbl.GetWebErrorStatus, uintptr(unsafe.Pointer(nav)), uintptr(unsafe.Pointer(&status)))
+		logf("page failed to load, web error status %d", status)
+	}
+	if firstPageShown {
+		return
+	}
+	firstPageShown = true
+	// Toggling visibility once makes WebView2 start painting
+	// (https://github.com/MicrosoftEdge/WebView2Feedback/issues/1077).
+	_ = chromium.Hide()
+	_ = chromium.Show()
+	chromium.Resize()
+	chromium.Focus()
+}
+
+// logf appends a line to %LOCALAPPDATA%\YouTubeLite\log.txt, kept small.
+func logf(format string, a ...any) {
+	path := filepath.Join(dataDir, "log.txt")
+	if st, err := os.Stat(path); err == nil && st.Size() > 256<<10 {
+		_ = os.Remove(path)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s  %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, a...))
 }
 
 // applyDPI scales the page to match Windows display scaling.
