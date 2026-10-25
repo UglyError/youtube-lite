@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -102,6 +103,7 @@ func main() {
 	chromium.Embed(mainWnd)
 	chromium.SetBackgroundColour(15, 15, 15, 255)
 	applyDPI()
+	loadZoom()
 
 	if s, err := chromium.GetSettings(); err == nil {
 		_ = s.PutAreDevToolsEnabled(false)
@@ -144,6 +146,10 @@ func wndProc(hwnd, msg, wp, lp uintptr) uintptr {
 			uintptr(r.right-r.left), uintptr(r.bottom-r.top), swpNoZOrder|swpNoActivate)
 		applyDPI()
 		return 0
+	case wmClose:
+		if chromium != nil {
+			saveZoom()
+		}
 	case wmDestroy:
 		if chromium != nil {
 			chromium.ShuttingDown()
@@ -198,13 +204,37 @@ func logf(format string, a ...any) {
 	fmt.Fprintf(f, "%s  %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, a...))
 }
 
+// Page zoom on top of Windows scaling. Ctrl + mouse wheel, Ctrl +/- and Ctrl+0 change it,
+// and the last setting is remembered.
+const defaultZoom = 1.25
+
+func zoomFile() string { return filepath.Join(dataDir, "zoom.txt") }
+
+func loadZoom() {
+	zoom := defaultZoom
+	if b, err := os.ReadFile(zoomFile()); err == nil {
+		if z, err := strconv.ParseFloat(strings.TrimSpace(string(b)), 64); err == nil && z >= 0.25 && z <= 5 {
+			zoom = z
+		}
+	}
+	_ = chromium.GetController().PutZoomFactor(zoom)
+}
+
+func saveZoom() {
+	if z, err := chromium.GetController().GetZoomFactor(); err == nil && z > 0 {
+		_ = os.WriteFile(zoomFile(), []byte(strconv.FormatFloat(z, 'f', 2, 64)), 0o600)
+	}
+}
+
 // applyDPI scales the page to match Windows display scaling.
 func applyDPI() {
 	if chromium == nil || chromium.GetController() == nil {
 		return
 	}
 	if c3 := chromium.GetController().GetICoreWebView2Controller3(); c3 != nil {
+		// Let WebView2 follow the monitor's scale (125%, 150%...) itself, starting from the current one.
 		_ = c3.PutRasterizationScale(dpiFor(mainWnd) / 96)
+		_ = c3.PutShouldDetectMonitorScaleChanges(true)
 	}
 	chromium.Resize()
 }

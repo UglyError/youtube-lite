@@ -10,6 +10,10 @@ HOW TO USE
      Click any video and it opens in the player window.
      Shift+click a video to add it to the queue instead.
 
+PAGE SIZE
+  Ctrl + mouse wheel, or Ctrl + plus / minus, makes the page bigger or
+  smaller (Ctrl+0 = 100%). The app remembers your choice.
+
 PLAYER CONTROLS
   Move the mouse over the player to show the control bar: seek bar,
   play/pause, volume, subtitles, speed, playlist, next/previous, fullscreen.
@@ -46,5 +50,5 @@ FIRST LAUNCH
   The app needs the Microsoft Edge WebView2 Runtime. It's built into
   Windows 11 and most Windows 10 PCs; if missing, the app offers the link.
 
-Built with mpv (https://mpv.io), uosc (https://github.com/tomasklaen/uosc)
+Built with mpv (https://mpv.io), uosc (https://github.com/tomasklaen/uosc),
 yt-dlp (https://github.com/yt-dlp/yt-dlp) and Deno (https://deno.com).

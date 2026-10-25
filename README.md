@@ -5,6 +5,7 @@ A Windows YouTube app built to use as little PC power as possible without hurtin
 - **Your real YouTube.** Sign in with your Google account and get your Home feed, Subscriptions, playlists and search, in a lightweight window.
 - **Low-power playback.** Clicking a video opens it in [mpv](https://mpv.io) at **1080p / 30fps in H.264**, which every GPU since about 2010 decodes in dedicated hardware, so the CPU barely works. The website's own player and hover previews never run.
 - **Modern playback controls** from [uosc](https://github.com/tomasklaen/uosc): seek bar, volume, subtitles, speed, playlist, fullscreen.
+- Page zoom (Ctrl + mouse wheel, Ctrl +/-) is remembered; starts at 125%.
 - Shift+click a video to queue it. Watched videos go to your YouTube history while you're signed in.
 
 ## Download
