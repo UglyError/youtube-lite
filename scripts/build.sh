@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds dist/YouTubeLite.zip: the launcher exe plus mpv, yt-dlp and the low-power config.
+# Builds dist/YouTubeLite.zip: the app exe plus mpv, yt-dlp, uosc and the low-power config.
 # Needs: go, curl, zip, python3. Downloads 7-Zip itself if 7zz isn't installed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -10,7 +10,7 @@ TMP=dist/tmp
 rm -rf dist && mkdir -p "$OUT/bin/portable_config" "$TMP"
 
 echo "== Building launcher"
-GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o "$OUT/YouTubeLite.exe" .
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H windowsgui" -o "$OUT/YouTubeLite.exe" .
 
 echo "== Getting 7-Zip"
 SEVENZ=$(command -v 7zz || true)
@@ -40,7 +40,13 @@ curl -fsSL -o "$TMP/mpv.7z" "$MPV_URL"
 echo "== Getting yt-dlp"
 curl -fsSL -o "$OUT/bin/yt-dlp.exe" https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
 
+echo "== Getting uosc (player controls)"
+curl -fsSL -o "$TMP/uosc.zip" https://github.com/tomasklaen/uosc/releases/latest/download/uosc.zip
+python3 -c 'import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$TMP/uosc.zip" "$OUT/bin/portable_config"
+
 cp config/mpv.conf "$OUT/bin/portable_config/"
+mkdir -p "$OUT/bin/portable_config/script-opts"
+cp config/script-opts/uosc.conf "$OUT/bin/portable_config/script-opts/"
 sed 's/\r*$/\r/' config/README.txt > "$OUT/README.txt"
 
 (cd dist && zip -qr9 YouTubeLite.zip YouTubeLite)

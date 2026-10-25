@@ -1,203 +1,190 @@
-// YouTube Lite: a tiny launcher that searches YouTube with yt-dlp and plays
-// videos in mpv using a low-power, hardware-decoded 1080p/30fps profile.
+//go:build windows
+
+// YouTube Lite: browse YouTube (signed in, with your own feed and subscriptions) in a
+// lightweight window, and watch videos in mpv with a low-power, hardware-decoded
+// 1080p/30fps profile instead of the website's player.
 package main
 
 import (
-	"bufio"
-	"fmt"
+	_ "embed"
+	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
+	"runtime"
 	"strings"
-	"syscall"
-	"time"
+	"unsafe"
+
+	"github.com/wailsapp/go-webview2/pkg/edge"
+	"github.com/wailsapp/go-webview2/webviewloader"
+	"golang.org/x/sys/windows"
 )
+
+//go:embed inject.js
+var injectJS string
 
 const (
-	searchCount  = 10
-	updateEvery  = 3 * 24 * time.Hour
-	createNoWnd  = 0x08000000 // CREATE_NO_WINDOW
-	updateMarker = "last-update.txt"
+	appName      = "YouTube Lite"
+	startURL     = "https://www.youtube.com/"
+	webview2Page = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
 )
-
-type result struct {
-	id, title, channel, duration string
-}
 
 var (
-	binDir string
-	ytdlp  string
-	mpv    string
-	in     = bufio.NewReader(os.Stdin)
+	binDir, mpvPath, ytdlpPath string
+	dataDir, cookiePath        string
+
+	mainWnd  uintptr
+	chromium *edge.Chromium
+	cookies  *edge.ICoreWebView2CookieManager
 )
+
+func init() {
+	// WebView2 and the window must live on one OS thread.
+	runtime.LockOSThread()
+}
 
 func main() {
 	exe, err := os.Executable()
 	if err != nil {
-		fail(err)
+		fatal(err.Error())
 	}
-	// Show video titles with emoji/non-Latin characters correctly.
-	syscall.NewLazyDLL("kernel32.dll").NewProc("SetConsoleOutputCP").Call(65001)
 	binDir = filepath.Join(filepath.Dir(exe), "bin")
-	ytdlp = filepath.Join(binDir, "yt-dlp.exe")
-	mpv = filepath.Join(binDir, "mpv.exe")
-	for _, p := range []string{ytdlp, mpv} {
+	mpvPath = filepath.Join(binDir, "mpv.exe")
+	ytdlpPath = filepath.Join(binDir, "yt-dlp.exe")
+	for _, p := range []string{mpvPath, ytdlpPath} {
 		if _, err := os.Stat(p); err != nil {
-			fail(fmt.Errorf("missing %s - keep the bin folder next to YouTubeLite.exe", p))
+			fatal("Missing " + p + "\n\nKeep the \"bin\" folder next to YouTubeLite.exe.")
 		}
 	}
 
-	fmt.Println("==============================================")
-	fmt.Println("  YouTube Lite  -  1080p / 30fps / low power")
-	fmt.Println("==============================================")
-	maybeUpdate()
+	// Sign-in and the cookie copy for the player stay in your own Windows profile.
+	dataDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "YouTubeLite")
+	_ = os.MkdirAll(dataDir, 0o700)
+	cookiePath = filepath.Join(dataDir, "cookies.txt")
 
-	// Links passed on the command line (drag & drop onto the exe) play straight away.
-	if len(os.Args) > 1 {
-		for _, a := range os.Args[1:] {
-			play(a)
+	if v, err := webviewloader.GetAvailableCoreWebView2BrowserVersionString(""); err != nil || v == "" {
+		if messageBox(appName, "YouTube Lite needs the Microsoft Edge WebView2 Runtime (built into Windows 11 and most Windows 10 PCs).\n\nOpen the download page now?", mbYesNo|mbIconWarning) == idYes {
+			openInBrowser(webview2Page)
+		}
+		os.Exit(1)
+	}
+
+	go maybeUpdate()
+
+	enableDPIAwareness()
+	_ = windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED)
+	mainWnd = createMainWindow(appName, mpvPath, wndProc)
+	if mainWnd == 0 {
+		fatal("Couldn't create the window.")
+	}
+
+	chromium = edge.NewChromium()
+	chromium.DataPath = filepath.Join(dataDir, "WebView")
+	chromium.SetErrorCallback(func(err error) {
+		fatal("The browser view stopped working:\n" + err.Error())
+	})
+	chromium.MessageCallback = func(message string, _ *edge.ICoreWebView2, _ *edge.ICoreWebView2WebMessageReceivedEventArgs) {
+		onPageMessage(message)
+	}
+	chromium.Embed(mainWnd)
+	applyDPI()
+
+	if s, err := chromium.GetSettings(); err == nil {
+		_ = s.PutAreDevToolsEnabled(false)
+		_ = s.PutIsStatusBarEnabled(false)
+		_ = s.PutAreHostObjectsAllowed(false)
+	}
+	if cookies, err = chromium.GetCookieManager(); err != nil {
+		cookies = nil
+	}
+
+	chromium.Init(injectJS)
+	chromium.Navigate(startURL)
+	showWindow(mainWnd)
+	chromium.Resize()
+	chromium.Focus()
+
+	// A link dragged onto the exe (or "Open with") plays straight away.
+	for _, a := range os.Args[1:] {
+		if strings.Contains(a, "youtu") {
+			startPlayback(a, false)
 		}
 	}
 
-	for {
-		fmt.Println()
-		fmt.Println("Paste a YouTube link, or type something to search.")
-		fmt.Println("(u = update yt-dlp, q = quit)")
-		line := prompt("> ")
-		switch strings.ToLower(line) {
-		case "":
-			continue
-		case "q", "quit", "exit":
-			return
-		case "u", "update":
-			update()
-			continue
-		}
-		if isURL(line) {
-			play(line)
-		} else {
-			searchAndPick(line)
-		}
-	}
+	runMessageLoop()
 }
 
-func isURL(s string) bool {
-	l := strings.ToLower(s)
-	return strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://") ||
-		strings.HasPrefix(l, "www.") || strings.HasPrefix(l, "youtu.be/") ||
-		strings.HasPrefix(l, "youtube.com/") || strings.HasPrefix(l, "m.youtube.com/")
+func wndProc(hwnd, msg, wp, lp uintptr) uintptr {
+	switch msg {
+	case wmSize:
+		if chromium != nil {
+			chromium.Resize()
+		}
+	case wmMove:
+		if chromium != nil {
+			_ = chromium.NotifyParentWindowPositionChanged()
+		}
+	case wmDpiChanged:
+		r := (*rect)(unsafe.Pointer(lp))
+		procSetWindowPos.Call(hwnd, 0, uintptr(r.left), uintptr(r.top),
+			uintptr(r.right-r.left), uintptr(r.bottom-r.top), swpNoZOrder|swpNoActivate)
+		applyDPI()
+		return 0
+	case wmDestroy:
+		if chromium != nil {
+			chromium.ShuttingDown()
+		}
+		procPostQuitMessage.Call(0)
+		return 0
+	}
+	return defWindowProc(hwnd, msg, wp, lp)
 }
 
-func searchAndPick(query string) {
-	fmt.Printf("Searching for \"%s\"...\n", query)
-	cmd := hidden(exec.Command(ytdlp, "--flat-playlist", "--no-warnings", "--ignore-config",
-		"--print", "%(id)s\t%(title)s\t%(channel,uploader)s\t%(duration_string)s",
-		fmt.Sprintf("ytsearch%d:%s", searchCount, query)))
-	out, err := cmd.Output()
-	if err != nil {
-		fmt.Println("Search failed. Check your internet connection, or type u to update yt-dlp.")
+// applyDPI scales the page to match Windows display scaling.
+func applyDPI() {
+	if chromium == nil || chromium.GetController() == nil {
 		return
 	}
-	var res []result
-	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		f := strings.Split(strings.TrimRight(l, "\r"), "\t")
-		if len(f) < 4 || f[0] == "" {
-			continue
-		}
-		res = append(res, result{f[0], f[1], f[2], f[3]})
+	if c3 := chromium.GetController().GetICoreWebView2Controller3(); c3 != nil {
+		_ = c3.PutRasterizationScale(dpiFor(mainWnd) / 96)
 	}
-	if len(res) == 0 {
-		fmt.Println("No results.")
-		return
-	}
-	for {
-		fmt.Println()
-		for i, r := range res {
-			dur := r.duration
-			if dur == "NA" {
-				dur = "live"
-			}
-			fmt.Printf("%2d. %s\n    %s  [%s]\n", i+1, trim(r.title, 70), trim(r.channel, 40), dur)
-		}
-		choice := prompt("\nPick a number (Enter = new search): ")
-		if choice == "" {
-			return
-		}
-		n, err := strconv.Atoi(choice)
-		if err != nil || n < 1 || n > len(res) {
-			fmt.Println("Not a valid number.")
-			continue
-		}
-		play("https://www.youtube.com/watch?v=" + res[n-1].id)
-	}
+	chromium.Resize()
 }
 
-func play(url string) {
+type pageMessage struct {
+	Type  string `json:"type"`
+	URL   string `json:"url"`
+	Queue bool   `json:"queue"`
+}
+
+func onPageMessage(raw string) {
+	var m pageMessage
+	if json.Unmarshal([]byte(raw), &m) != nil || m.Type != "play" || m.URL == "" {
+		return
+	}
+	startPlayback(m.URL, m.Queue)
+}
+
+// startPlayback refreshes the player's copy of your sign-in, then plays the video.
+func startPlayback(url string, queue bool) {
 	if !strings.Contains(url, "://") {
 		url = "https://" + url
 	}
-	fmt.Println("Playing... (close the player window or press q in it to come back here)")
-	cmd := exec.Command(mpv, url)
-	cmd.Dir = binDir
-	if err := cmd.Run(); err != nil {
-		fmt.Println("Playback ended with an error:", err)
-		fmt.Println("If videos stop working, type u to update yt-dlp.")
-	}
-}
-
-// YouTube changes often, so yt-dlp keeps itself current every few days.
-func maybeUpdate() {
-	marker := filepath.Join(binDir, updateMarker)
-	if st, err := os.Stat(marker); err == nil && time.Since(st.ModTime()) < updateEvery {
+	if cookies == nil {
+		go play(url, queue, "", false)
 		return
 	}
-	update()
+	fetchCookies(cookies, func(list []cookie, err error) {
+		file, signedIn := "", false
+		if err == nil {
+			if signedIn, err = writeCookieFile(cookiePath, list); err == nil {
+				file = cookiePath
+			}
+		}
+		go play(url, queue, file, signedIn)
+	})
 }
 
-func update() {
-	fmt.Println("Checking for yt-dlp updates...")
-	cmd := hidden(exec.Command(ytdlp, "-U"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		fmt.Println("Update check failed (will retry later):", lastLine(string(out)))
-		return
-	}
-	fmt.Println(lastLine(string(out)))
-	_ = os.WriteFile(filepath.Join(binDir, updateMarker), []byte(time.Now().Format(time.RFC3339)), 0o644)
-}
-
-func hidden(c *exec.Cmd) *exec.Cmd {
-	c.Dir = binDir
-	c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWnd}
-	return c
-}
-
-func prompt(p string) string {
-	fmt.Print(p)
-	s, err := in.ReadString('\n')
-	if err != nil && s == "" {
-		os.Exit(0)
-	}
-	return strings.TrimSpace(s)
-}
-
-func trim(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n-3]) + "..."
-}
-
-func lastLine(s string) string {
-	l := strings.Split(strings.TrimSpace(s), "\n")
-	return l[len(l)-1]
-}
-
-func fail(err error) {
-	fmt.Println("Error:", err)
-	fmt.Print("Press Enter to close.")
-	in.ReadString('\n')
+func fatal(text string) {
+	messageBox(appName, text, mbIconError)
 	os.Exit(1)
 }
