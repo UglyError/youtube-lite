@@ -2,6 +2,7 @@ name: Build release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -19,11 +20,12 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y 7zip zip
       - run: ./scripts/build.sh
       - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.{0}', github.run_number) }}
+          name: YouTube Lite ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.{0}', github.run_number) }}
+          make_latest: true
+          body: |
+            Download **YouTubeLite.zip**, unzip it, and run `YouTubeLite.exe` (Windows 10/11, 64-bit).
+
+            Plays YouTube at 1080p/30fps with H.264 hardware decoding for minimal CPU and power use. Bundles the latest mpv and yt-dlp (yt-dlp keeps itself updated).
           files: dist/YouTubeLite.zip
-      - uses: actions/upload-artifact@v4
-        if: "!startsWith(github.ref, 'refs/tags/')"
-        with:
-          name: YouTubeLite
-          path: dist/YouTubeLite.zip

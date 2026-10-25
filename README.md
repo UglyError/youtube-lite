@@ -37,7 +37,7 @@ In the launcher, type `u` to update yt-dlp right away. It also updates itself ev
 ./scripts/build.sh   # needs go, curl, zip and 7zz/7z; output: dist/YouTubeLite.zip
 ```
 
-Pushing a tag like `v1.0.0` makes GitHub Actions build the zip and attach it to a release.
+Every push to `main` (or a `v*` tag) makes GitHub Actions build the zip and publish it as a release.
 
 ## Files
 
