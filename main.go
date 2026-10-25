@@ -34,6 +34,7 @@ const (
 var (
 	binDir, mpvPath, ytdlpPath string
 	dataDir, cookiePath        string
+	playerLog                  string
 
 	mainWnd  uintptr
 	chromium *edge.Chromium
@@ -63,6 +64,7 @@ func main() {
 	dataDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "YouTubeLite")
 	_ = os.MkdirAll(dataDir, 0o700)
 	cookiePath = filepath.Join(dataDir, "cookies.txt")
+	playerLog = filepath.Join(dataDir, "player-log.txt")
 
 	if v, err := webviewloader.GetAvailableCoreWebView2BrowserVersionString(""); err != nil || v == "" {
 		if messageBox(appName, "YouTube Lite needs the Microsoft Edge WebView2 Runtime (built into Windows 11 and most Windows 10 PCs).\n\nOpen the download page now?", mbYesNo|mbIconWarning) == idYes {

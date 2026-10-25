@@ -47,4 +47,4 @@ FIRST LAUNCH
   Windows 11 and most Windows 10 PCs; if missing, the app offers the link.
 
 Built with mpv (https://mpv.io), uosc (https://github.com/tomasklaen/uosc)
-and yt-dlp (https://github.com/yt-dlp/yt-dlp).
+yt-dlp (https://github.com/yt-dlp/yt-dlp) and Deno (https://deno.com).

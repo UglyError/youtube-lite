@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds dist/YouTubeLite.zip: the app exe plus mpv, yt-dlp, uosc and the low-power config.
+# Builds dist/YouTubeLite.zip: the app exe plus mpv, yt-dlp, Deno, uosc and the low-power config.
 # Needs: go, curl, zip, python3. Downloads 7-Zip itself if 7zz isn't installed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -39,6 +39,10 @@ curl -fsSL -o "$TMP/mpv.7z" "$MPV_URL"
 
 echo "== Getting yt-dlp"
 curl -fsSL -o "$OUT/bin/yt-dlp.exe" https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
+
+echo "== Getting Deno (JavaScript runtime yt-dlp needs for YouTube)"
+curl -fsSL -o "$TMP/deno.zip" https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip
+python3 -c 'import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extract("deno.exe", sys.argv[2])' "$TMP/deno.zip" "$OUT/bin"
 
 echo "== Getting uosc (player controls)"
 curl -fsSL -o "$TMP/uosc.zip" https://github.com/tomasklaen/uosc/releases/latest/download/uosc.zip

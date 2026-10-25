@@ -31,7 +31,7 @@ Move the mouse over the player to show the control bar. Right-click opens the fu
 - The window is Microsoft Edge WebView2 showing youtube.com. `inject.js` catches clicks on videos and sends them to the app instead of letting the page play them.
 - The app copies your YouTube sign-in cookies from WebView2 into `%LOCALAPPDATA%\YouTubeLite\cookies.txt` for [yt-dlp](https://github.com/yt-dlp/yt-dlp), so members-only, age-restricted and private videos work. Nothing leaves your PC except normal YouTube traffic. Delete that folder to sign out.
 - mpv runs with `config/mpv.conf`: zero-copy D3D11 hardware decoding and cheap bilinear scaling, with no debanding, dithering or interpolation.
-- yt-dlp updates itself every 3 days, and right away when a video fails to play.
+- yt-dlp uses the bundled [Deno](https://deno.com) runtime to unlock YouTube's streams, and updates itself every 3 days and right away when a video fails to play. Player errors are logged to `%LOCALAPPDATA%\YouTubeLite\player-log.txt`.
 
 ## Notes
 

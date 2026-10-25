@@ -31,7 +31,11 @@ func play(url string, queue bool, cookieFile string, signedIn bool) {
 		return
 	}
 
-	args := []string{"--input-ipc-server=" + mpvPipe}
+	args := []string{"--input-ipc-server=" + mpvPipe, "--log-file=" + playerLog}
+	// yt-dlp needs a JavaScript runtime to unlock YouTube's video streams.
+	if deno := filepath.Join(binDir, "deno.exe"); fileExists(deno) {
+		args = append(args, "--ytdl-raw-options-append=js-runtimes=deno:"+deno)
+	}
 	if cookieFile != "" {
 		args = append(args, "--ytdl-raw-options-append=cookies="+cookieFile)
 		if signedIn {
@@ -43,19 +47,52 @@ func play(url string, queue bool, cookieFile string, signedIn bool) {
 	cmd := exec.Command(mpvPath, args...)
 	cmd.Dir = binDir
 	if err := cmd.Start(); err != nil {
-		messageBox("YouTube Lite", "Couldn't start the player:\n"+err.Error(), mbIconError)
+		messageBox(appName, "Couldn't start the player:\n"+err.Error(), mbIconError)
 		return
 	}
 	go func() {
 		started := time.Now()
 		err := cmd.Wait()
 		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == mpvLoadError && time.Since(started) < 2*time.Minute {
-			messageBox("YouTube Lite",
-				"That video couldn't be played.\n\nYouTube changes things often, so the video downloader is updating now. Try again in a minute.",
+			reason := playerErrors()
+			logf("playback failed for %s: %s", url, reason)
+			if reason != "" {
+				reason = "\n\nDetails:\n" + reason
+			}
+			messageBox(appName,
+				"That video couldn't be played. The video downloader is checking for an update now, so try again in a minute."+reason,
 				mbIconWarning)
 			update()
 		}
 	}()
+}
+
+// playerErrors returns the last few error lines from the player's log.
+func playerErrors() string {
+	b, err := os.ReadFile(playerLog)
+	if err != nil {
+		return ""
+	}
+	var errs []string
+	for _, l := range strings.Split(string(b), "\n") {
+		// mpv log lines look like "[   1.234][e][ytdl_hook] ERROR: ..."
+		if i := strings.Index(l, "][e]["); i >= 0 {
+			msg := strings.TrimSpace(l[i+5:])
+			if j := strings.Index(msg, "] "); j >= 0 {
+				msg = msg[j+2:]
+			}
+			errs = append(errs, msg)
+		}
+	}
+	if len(errs) > 4 {
+		errs = errs[len(errs)-4:]
+	}
+	return strings.Join(errs, "\n")
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // sendToPlayer runs one command in the open mpv window. It reports false if no player is open.
